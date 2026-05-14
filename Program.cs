@@ -66,8 +66,8 @@ foreach (var file in Directory.EnumerateFiles(directory, "*", options))
         }
 
         var sourceEncoding = DetectEncoding(bytes);
-        var sourceText = sourceEncoding.GetString(bytes);
-        var targetBytes = targetEncoding.GetBytes(sourceText);
+        var sourceText = DecodeTextWithoutBom(bytes, sourceEncoding);
+        var targetBytes = BuildBytesWithTargetBom(targetEncoding, sourceText);
 
         if (AreSameBytes(bytes, targetBytes))
         {
@@ -79,7 +79,7 @@ foreach (var file in Directory.EnumerateFiles(directory, "*", options))
         converted++;
 
         Console.WriteLine($"[已转换] {file}");
-        Console.WriteLine($"         {sourceEncoding.WebName} -> {targetDisplayName}");
+        Console.WriteLine($"         {sourceEncoding.DisplayName} -> {targetDisplayName}");
     }
     catch (Exception ex)
     {
@@ -143,49 +143,99 @@ static bool LooksLikeText(byte[] data)
     return nullCount == 0 && controlCount < max * 0.02;
 }
 
-static Encoding DetectEncoding(byte[] data)
+static DetectedEncodingInfo DetectEncoding(byte[] data)
 {
     if (data.Length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
     {
-        return new UTF8Encoding(encoderShouldEmitUTF8Identifier: true, throwOnInvalidBytes: true);
+        return new DetectedEncodingInfo(
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: true, throwOnInvalidBytes: true),
+            "utf-8-bom",
+            3);
     }
 
     if (data.Length >= 4 && data[0] == 0xFF && data[1] == 0xFE && data[2] == 0x00 && data[3] == 0x00)
     {
-        return new UTF32Encoding(bigEndian: false, byteOrderMark: true, throwOnInvalidCharacters: true);
+        return new DetectedEncodingInfo(
+            new UTF32Encoding(bigEndian: false, byteOrderMark: true, throwOnInvalidCharacters: true),
+            "utf-32le-bom",
+            4);
     }
 
     if (data.Length >= 4 && data[0] == 0x00 && data[1] == 0x00 && data[2] == 0xFE && data[3] == 0xFF)
     {
-        return new UTF32Encoding(bigEndian: true, byteOrderMark: true, throwOnInvalidCharacters: true);
+        return new DetectedEncodingInfo(
+            new UTF32Encoding(bigEndian: true, byteOrderMark: true, throwOnInvalidCharacters: true),
+            "utf-32be-bom",
+            4);
     }
 
     if (data.Length >= 2 && data[0] == 0xFF && data[1] == 0xFE)
     {
-        return new UnicodeEncoding(bigEndian: false, byteOrderMark: true, throwOnInvalidBytes: true);
+        return new DetectedEncodingInfo(
+            new UnicodeEncoding(bigEndian: false, byteOrderMark: true, throwOnInvalidBytes: true),
+            "utf-16le-bom",
+            2);
     }
 
     if (data.Length >= 2 && data[0] == 0xFE && data[1] == 0xFF)
     {
-        return new UnicodeEncoding(bigEndian: true, byteOrderMark: true, throwOnInvalidBytes: true);
+        return new DetectedEncodingInfo(
+            new UnicodeEncoding(bigEndian: true, byteOrderMark: true, throwOnInvalidBytes: true),
+            "utf-16be-bom",
+            2);
     }
 
     if (IsValidUtf8(data))
     {
-        return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+        return new DetectedEncodingInfo(
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true),
+            "utf-8",
+            0);
     }
 
     if (LooksLikeUtf16LeWithoutBom(data))
     {
-        return new UnicodeEncoding(bigEndian: false, byteOrderMark: false, throwOnInvalidBytes: false);
+        return new DetectedEncodingInfo(
+            new UnicodeEncoding(bigEndian: false, byteOrderMark: false, throwOnInvalidBytes: false),
+            "utf-16le",
+            0);
     }
 
     if (LooksLikeUtf16BeWithoutBom(data))
     {
-        return new UnicodeEncoding(bigEndian: true, byteOrderMark: false, throwOnInvalidBytes: false);
+        return new DetectedEncodingInfo(
+            new UnicodeEncoding(bigEndian: true, byteOrderMark: false, throwOnInvalidBytes: false),
+            "utf-16be",
+            0);
     }
 
-    return Encoding.GetEncoding("GB18030");
+    return new DetectedEncodingInfo(
+        Encoding.GetEncoding("GB18030"),
+        "gb18030",
+        0);
+}
+
+static string DecodeTextWithoutBom(byte[] data, DetectedEncodingInfo detected)
+{
+    return detected.BomLength > 0
+        ? detected.Encoding.GetString(data, detected.BomLength, data.Length - detected.BomLength)
+        : detected.Encoding.GetString(data);
+}
+
+static byte[] BuildBytesWithTargetBom(Encoding targetEncoding, string text)
+{
+    var contentBytes = targetEncoding.GetBytes(text);
+    var preamble = targetEncoding.GetPreamble();
+
+    if (preamble.Length == 0)
+    {
+        return contentBytes;
+    }
+
+    var result = new byte[preamble.Length + contentBytes.Length];
+    Buffer.BlockCopy(preamble, 0, result, 0, preamble.Length);
+    Buffer.BlockCopy(contentBytes, 0, result, preamble.Length, contentBytes.Length);
+    return result;
 }
 
 static bool IsValidUtf8(byte[] data)
@@ -356,6 +406,8 @@ static void PrintSupportedEncodings()
     Console.WriteLine("  ascii");
     Console.WriteLine("  iso-8859-1");
 }
+
+readonly record struct DetectedEncodingInfo(Encoding Encoding, string DisplayName, int BomLength);
 
 static class KnownTextExtensions
 {

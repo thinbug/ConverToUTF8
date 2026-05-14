@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": ".NET F5 (jconvert)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "构建 (Debug)",
+      "program": "${workspaceFolder}/bin/Debug/net9.0/win-x64/jconvert.exe",
+      "args": [
+        "M:\\Temp\\t",
+        "utf8"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    }
+  ]
+}
